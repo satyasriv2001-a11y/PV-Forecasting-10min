@@ -4,7 +4,7 @@
 
 """
 
-Multi-Resolution Predictions for Project1140
+Multi-Resolution Predictions (any plant)
 
 
 
@@ -17,6 +17,7 @@ Generates overlay plots and hourly RMSE plots.
 Usage:
 
     python multi_resolution_predictions_1140.py --data-path data/Project1140.csv --model XGB --complexity high --scenario PV+NWP
+    python multi_resolution_predictions_1140.py --data-path /path/to/YourPlant.csv --output-dir /path/to/output
 
 """
 
@@ -1213,7 +1214,8 @@ def run_predictions_at_resolution(data_path, config, output_dir, resolution_minu
     print(f"Test intervals: {test_intervals}")
 
     print(f"Output directory: {output_dir}")
-
+    if plant_name:
+        print(f"Plant: {plant_name}")
     print("=" * 80)
 
     
@@ -1482,28 +1484,39 @@ def run_predictions_at_resolution(data_path, config, output_dir, resolution_minu
 
     
 
-    # Map test sample indices to dataframe time indices (start of each prediction window)
+    first_test_sample_idx = int(test_idx_list[0])
     intervals_per_hour = 60 // resolution_minutes
     past_intervals = past_hours * intervals_per_hour
-    intervals_per_day = 24 * intervals_per_hour  # e.g. 144 for 10-min
+    first_test_start_in_df = int(past_intervals) + first_test_sample_idx
 
-    # All valid test time indices (one per test sample, where we have room for future_intervals)
-    all_valid = []
-    for s in test_idx_list:
-        time_idx = int(past_intervals + s)
-        if time_idx >= 0 and time_idx < len(df_clean) - future_intervals:
-            all_valid.append(time_idx)
+    first_test_datetime = df_clean.iloc[first_test_start_in_df]['Datetime']
+    target_year = first_test_datetime.year
+    target_date = pd.Timestamp(year=target_year, month=6, day=20, hour=0, minute=0)
 
-    # Subsample: one prediction per day so we get 10 AM-6 PM RMSE for every date without running 100k predictions
-    stride = max(1, intervals_per_day)
-    test_time_indices = all_valid[::stride]
+    start_idx = None
+    for idx in range(len(df_clean)):
+        if df_clean.iloc[idx]['Datetime'] >= target_date:
+            start_idx = idx
+            break
 
-    if len(test_time_indices) == 0:
-        print(f"  Warning: No valid test time indices (check data length and test split).")
+    if start_idx is None or start_idx < first_test_start_in_df:
+        print(f"  Warning: Could not find June 20, {target_year} 00:00 in test data.")
+        print(f"  Using first test sample start instead: {df_clean.iloc[first_test_start_in_df]['Datetime']}")
+        start_idx = first_test_start_in_df
     else:
-        first_dt = df_clean.iloc[test_time_indices[0]]['Datetime']
-        last_dt = df_clean.iloc[test_time_indices[-1]]['Datetime']
-        print(f"  Predictions from {first_dt.strftime('%Y-%m-%d')} to {last_dt.strftime('%Y-%m-%d')} ({len(test_time_indices)} days)")
+        actual_start_date = df_clean.iloc[start_idx]['Datetime']
+        print(f"  Starting predictions from: {actual_start_date.strftime('%Y-%m-%d %H:%M')}")
+
+    test_time_indices = []
+    for i in range(test_intervals):
+        time_idx = int(start_idx + i)
+        if time_idx >= 0 and time_idx < len(df_clean) - future_intervals:
+            test_time_indices.append(time_idx)
+        else:
+            break
+
+    if len(test_time_indices) < test_intervals:
+        print(f"  Warning: Only found {len(test_time_indices)} valid intervals (requested {test_intervals})")
 
     
 
@@ -1637,10 +1650,6 @@ def run_predictions_at_resolution(data_path, config, output_dir, resolution_minu
 
         print(f"  Calculated hourly RMSE for {len(hourly_rmse_data)} hours")
 
-    if len(all_predictions) == 0:
-        print(f"  [DIAGNOSTIC] No predictions produced: valid test indices = {len(all_valid)}, prediction starts = {len(test_time_indices)}, successes = 0.")
-        print(f"  [DIAGNOSTIC] Check that your data has enough rows and that test set is not empty (train/val/test split).")
-
     return all_predictions, hourly_rmse_data, all_pred_data  # Also return all_pred_data for 10AM-6PM RMSE calculation
 
 
@@ -1668,6 +1677,8 @@ def run_multi_resolution_predictions(data_path, config, output_dir, plant_name=N
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"\nOutput directory created: {output_dir}")
+    if plant_name:
+        print(f"Plant: {plant_name}")
 
     
 
@@ -1845,11 +1856,11 @@ def run_multi_resolution_predictions(data_path, config, output_dir, plant_name=N
 
     
 
-    # Calculate and save RMSE for 10 AM - 6 PM for every date that has prediction data
+    # Calculate and save RMSE for 10 AM - 6 PM (June 20 or 21) for each resolution
 
     print(f"\n{'='*80}")
 
-    print("Calculating RMSE for 10 AM - 6 PM for each date (each resolution)")
+    print("Calculating RMSE for 10 AM - 6 PM (June 20 or 21) for each resolution")
 
     print(f"{'='*80}")
 
@@ -1873,24 +1884,31 @@ def run_multi_resolution_predictions(data_path, config, output_dir, plant_name=N
 
         
 
-        # Convert to DataFrame
-
         pred_df = pd.DataFrame(all_pred_data, columns=['Datetime', 'Predicted', 'Ground_Truth'])
-
         pred_df['Datetime'] = pd.to_datetime(pred_df['Datetime'])
 
-        # Restrict to 10 AM - 6 PM window for all dates
-        window = pred_df[
-            (pred_df['Datetime'].dt.hour >= 10) &
-            (pred_df['Datetime'].dt.hour <= 18)
-        ].copy()
-        window = window.drop_duplicates(subset=['Datetime'], keep='first')
+        dates_to_check = [
+            pd.Timestamp(year=2024, month=6, day=20, hour=10, minute=0),
+            pd.Timestamp(year=2024, month=6, day=21, hour=10, minute=0)
+        ]
+        best_date = None
+        best_count = 0
+        for check_date in dates_to_check:
+            date_start = check_date
+            date_end = check_date.replace(hour=18, minute=0)
+            date_filtered = pred_df[
+                (pred_df['Datetime'] >= date_start) &
+                (pred_df['Datetime'] <= date_end) &
+                (pred_df['Datetime'].dt.hour >= 10) &
+                (pred_df['Datetime'].dt.hour <= 18)
+            ]
+            valid_count = len(date_filtered[~(date_filtered['Predicted'].isna() | date_filtered['Ground_Truth'].isna())])
+            if valid_count > best_count:
+                best_count = valid_count
+                best_date = check_date
 
-        # Unique dates that have at least one point in 10 AM - 6 PM
-        unique_dates = sorted(window['Datetime'].dt.normalize().unique())
-
-        if len(unique_dates) == 0:
-            print(f"  [WARNING] No 10 AM - 6 PM data for {resolution_name}")
+        if best_date is None or best_count == 0:
+            print(f"  [WARNING] No valid data for 10 AM - 6 PM on June 20 or 21, 2024 for {resolution_name}")
             rmse_results.append({
                 'Resolution': resolution_name,
                 'Date': 'N/A',
@@ -1900,48 +1918,44 @@ def run_multi_resolution_predictions(data_path, config, output_dir, plant_name=N
             })
             continue
 
-        for day_date in unique_dates:
-            date_start = pd.Timestamp(day_date).replace(hour=10, minute=0, second=0, microsecond=0)
-            date_end = pd.Timestamp(day_date).replace(hour=18, minute=0, second=0, microsecond=0)
+        date_start = best_date
+        date_end = best_date.replace(hour=18, minute=0)
+        filtered_df = pred_df[
+            (pred_df['Datetime'] >= date_start) &
+            (pred_df['Datetime'] <= date_end) &
+            (pred_df['Datetime'].dt.hour >= 10) &
+            (pred_df['Datetime'].dt.hour <= 18)
+        ].copy()
+        filtered_df = filtered_df.drop_duplicates(subset=['Datetime'], keep='first')
 
-            filtered_df = window[
-                (window['Datetime'] >= date_start) &
-                (window['Datetime'] <= date_end)
-            ].copy()
-
-            valid_mask = ~(filtered_df['Predicted'].isna() | filtered_df['Ground_Truth'].isna())
-
-            if valid_mask.sum() > 0:
-                preds_valid = filtered_df.loc[valid_mask, 'Predicted'].values
-                gt_valid = filtered_df.loc[valid_mask, 'Ground_Truth'].values
-
-                preds_valid_abs = preds_valid / 100.0
-                gt_valid_abs = gt_valid / 100.0
-
-                mse = np.mean((preds_valid_abs - gt_valid_abs) ** 2)
-                rmse_10am_6pm = np.sqrt(mse)
-                mae_10am_6pm = np.mean(np.abs(preds_valid_abs - gt_valid_abs))
-                n_samples = len(preds_valid)
-
-                date_str = pd.Timestamp(day_date).strftime('%Y-%m-%d')
-                print(f"  {resolution_name} {date_str}: RMSE = {rmse_10am_6pm:.4f}, MAE = {mae_10am_6pm:.4f}, Samples = {n_samples}")
-
-                rmse_results.append({
-                    'Resolution': resolution_name,
-                    'Date': date_str,
-                    'RMSE_10AM_6PM': rmse_10am_6pm,
-                    'MAE_10AM_6PM': mae_10am_6pm,
-                    'Number_of_Samples_10AM_6PM': n_samples
-                })
-            else:
-                date_str = pd.Timestamp(day_date).strftime('%Y-%m-%d')
-                rmse_results.append({
-                    'Resolution': resolution_name,
-                    'Date': date_str,
-                    'RMSE_10AM_6PM': np.nan,
-                    'MAE_10AM_6PM': np.nan,
-                    'Number_of_Samples_10AM_6PM': 0
-                })
+        valid_mask = ~(filtered_df['Predicted'].isna() | filtered_df['Ground_Truth'].isna())
+        if valid_mask.sum() > 0:
+            preds_valid = filtered_df.loc[valid_mask, 'Predicted'].values
+            gt_valid = filtered_df.loc[valid_mask, 'Ground_Truth'].values
+            preds_valid_abs = preds_valid / 100.0
+            gt_valid_abs = gt_valid / 100.0
+            mse = np.mean((preds_valid_abs - gt_valid_abs) ** 2)
+            rmse_10am_6pm = np.sqrt(mse)
+            mae_10am_6pm = np.mean(np.abs(preds_valid_abs - gt_valid_abs))
+            n_samples = len(preds_valid)
+            date_str = best_date.strftime('June %d, %Y')
+            print(f"  {resolution_name}: RMSE = {rmse_10am_6pm:.4f}, MAE = {mae_10am_6pm:.4f}, Samples = {n_samples} ({date_str})")
+            rmse_results.append({
+                'Resolution': resolution_name,
+                'Date': date_str,
+                'RMSE_10AM_6PM': rmse_10am_6pm,
+                'MAE_10AM_6PM': mae_10am_6pm,
+                'Number_of_Samples_10AM_6PM': n_samples
+            })
+        else:
+            print(f"  [WARNING] No valid data points for {resolution_name}")
+            rmse_results.append({
+                'Resolution': resolution_name,
+                'Date': 'N/A',
+                'RMSE_10AM_6PM': np.nan,
+                'MAE_10AM_6PM': np.nan,
+                'Number_of_Samples_10AM_6PM': 0
+            })
 
     
 
@@ -2183,7 +2197,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
 
-        description='Run 10-minute resolution predictions for Project1140',
+        description='Run 10-minute resolution predictions for the specified plant (CSV path).',
 
         formatter_class=argparse.RawDescriptionHelpFormatter
 
@@ -2193,7 +2207,7 @@ if __name__ == "__main__":
 
     parser.add_argument('--data-path', type=str, required=True,
 
-                       help='Path to data CSV file (e.g., data/Project1140.csv)')
+                       help='Path to plant data CSV (e.g. data/Project1140.csv or /path/to/YourPlant.csv)')
 
     parser.add_argument('--model', type=str, default='LSTM',
 
@@ -2231,6 +2245,10 @@ if __name__ == "__main__":
 
                        help='Output directory for plots (default: ./multi_resolution_predictions_<model>_<scenario>)')
 
+    parser.add_argument('--plant-name', type=str, default=None,
+
+                       help='Plant label (e.g. Project1140). If omitted, derived from --data-path filename.')
+
     
 
     args = parser.parse_args()
@@ -2265,13 +2283,16 @@ if __name__ == "__main__":
 
         output_dir = args.output_dir
 
-    
+    # Plant name: from --plant-name if given, else from data path filename
+    plant_name = args.plant_name
+    if plant_name is None:
+        plant_name = os.path.splitext(os.path.basename(args.data_path))[0]
 
     try:
 
         run_multi_resolution_predictions(
 
-            args.data_path, config, output_dir
+            args.data_path, config, output_dir, plant_name=plant_name
 
         )
 
