@@ -1,0 +1,69 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific - Results and outputs
+results/
+outputs/
+logs/
+*.xlsx
+*.csv
+!data/Project1140.csv
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+
+# Temporary files
+temp/
+tmp/
+*.log
+*.txt
+!requirements.txt
+
+# Model checkpoints
+*.pt
+*.pth
+*.h5
+*.pkl
+*.joblib
+
+# Documentation build
+docs/_build/
