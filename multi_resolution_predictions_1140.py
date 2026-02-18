@@ -1631,7 +1631,9 @@ def run_predictions_at_resolution(data_path, config, output_dir, resolution_minu
 
         print(f"  Calculated hourly RMSE for {len(hourly_rmse_data)} hours")
 
-    
+    if len(all_predictions) == 0:
+        print(f"  [DIAGNOSTIC] No predictions produced: valid test indices = {len(all_valid)}, prediction starts = {len(test_time_indices)}, successes = 0.")
+        print(f"  [DIAGNOSTIC] Check that your data has enough rows and that test set is not empty (train/val/test split).")
 
     return all_predictions, hourly_rmse_data, all_pred_data  # Also return all_pred_data for 10AM-6PM RMSE calculation
 
@@ -1948,7 +1950,7 @@ def run_multi_resolution_predictions(data_path, config, output_dir, plant_name=N
         print(f"\n  RMSE Results Summary:")
         print(rmse_df.to_string(index=False))
     else:
-        # No results (e.g. no predictions for June 20/21 or all failed) – write placeholder so file exists
+        # No results – write placeholder and explain (no predictions were stored, so no 10 AM–6 PM data)
         rmse_df = pd.DataFrame([{
             'Resolution': '10-minute',
             'Date': 'N/A',
@@ -1957,7 +1959,7 @@ def run_multi_resolution_predictions(data_path, config, output_dir, plant_name=N
             'Number_of_Samples_10AM_6PM': 0
         }])
         rmse_df.to_csv(rmse_csv_path, index=False)
-        print(f"\n  [WARNING] No RMSE results (no valid 10 AM–6 PM data); placeholder CSV saved: {rmse_csv_path}")
+        print(f"\n  [WARNING] No RMSE results: no prediction data was stored (see [4/4] output above for 'Making predictions for 0 intervals' or '[ERROR] Prediction failed'). Placeholder CSV saved: {rmse_csv_path}")
 
     
 
