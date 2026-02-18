@@ -1265,10 +1265,9 @@ def run_predictions_at_resolution(data_path, config, output_dir, resolution_minu
         
 
         # Interpolate numeric columns using Piecewise Cubic Hermite Interpolating Polynomial (PCHIP)
-
-        t_orig = df_indexed.index.astype(np.float64)
-
-        t_new = df_resampled.index.astype(np.float64)
+        # Use int64 (nanoseconds) then float64; DatetimeIndex cannot be cast directly to float64 in pandas 2.x
+        t_orig = df_indexed.index.astype('int64').astype(np.float64)
+        t_new = df_resampled.index.astype('int64').astype(np.float64)
 
         numeric_cols = df_resampled.select_dtypes(include=[np.number]).columns
 
