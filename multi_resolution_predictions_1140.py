@@ -1884,11 +1884,11 @@ def run_multi_resolution_predictions(data_path, config, output_dir, plant_name=N
 
     
 
-    # Calculate and save RMSE for 10 AM - 6 PM (June 20 or 21, 2024) for each resolution
+    # Calculate and save RMSE for 10 AM - 6 PM for every date that has prediction data
 
     print(f"\n{'='*80}")
 
-    print("Calculating RMSE for 10 AM - 6 PM (June 20 or 21, 2024) for each resolution")
+    print("Calculating RMSE for 10 AM - 6 PM for each date (each resolution)")
 
     print(f"{'='*80}")
 
@@ -1918,219 +1918,93 @@ def run_multi_resolution_predictions(data_path, config, output_dir, plant_name=N
 
         pred_df['Datetime'] = pd.to_datetime(pred_df['Datetime'])
 
-        
+        # Restrict to 10 AM - 6 PM window for all dates
+        window = pred_df[
+            (pred_df['Datetime'].dt.hour >= 10) &
+            (pred_df['Datetime'].dt.hour <= 18)
+        ].copy()
+        window = window.drop_duplicates(subset=['Datetime'], keep='first')
 
-        # Determine which date (June 20 or 21, 2024) has more complete data for 10 AM - 6 PM
+        # Unique dates that have at least one point in 10 AM - 6 PM
+        unique_dates = sorted(window['Datetime'].dt.normalize().unique())
 
-        dates_to_check = [
-
-            pd.Timestamp(year=2024, month=6, day=20, hour=10, minute=0),
-
-            pd.Timestamp(year=2024, month=6, day=21, hour=10, minute=0)
-
-        ]
-
-        
-
-        best_date = None
-
-        best_count = 0
-
-        
-
-        for check_date in dates_to_check:
-
-            date_start = check_date
-
-            date_end = check_date.replace(hour=18, minute=0)
-
-            
-
-            date_filtered = pred_df[
-
-                (pred_df['Datetime'] >= date_start) &
-
-                (pred_df['Datetime'] <= date_end) &
-
-                (pred_df['Datetime'].dt.hour >= 10) &
-
-                (pred_df['Datetime'].dt.hour <= 18)
-
-            ]
-
-            
-
-            valid_count = len(date_filtered[
-
-                ~(date_filtered['Predicted'].isna() | date_filtered['Ground_Truth'].isna())
-
-            ])
-
-            
-
-            if valid_count > best_count:
-
-                best_count = valid_count
-
-                best_date = check_date
-
-        
-
-        if best_date is None or best_count == 0:
-
-            print(f"  [WARNING] No valid data for 10 AM - 6 PM on June 20 or 21, 2024 for {resolution_name}")
-
+        if len(unique_dates) == 0:
+            print(f"  [WARNING] No 10 AM - 6 PM data for {resolution_name}")
             rmse_results.append({
-
                 'Resolution': resolution_name,
-
                 'Date': 'N/A',
-
                 'RMSE_10AM_6PM': np.nan,
-
                 'MAE_10AM_6PM': np.nan,
-
                 'Number_of_Samples_10AM_6PM': 0
-
             })
-
             continue
 
-        
+        for day_date in unique_dates:
+            date_start = pd.Timestamp(day_date).replace(hour=10, minute=0, second=0, microsecond=0)
+            date_end = pd.Timestamp(day_date).replace(hour=18, minute=0, second=0, microsecond=0)
 
-        # Filter to best date, 10 AM - 6 PM
+            filtered_df = window[
+                (window['Datetime'] >= date_start) &
+                (window['Datetime'] <= date_end)
+            ].copy()
 
-        date_start = best_date
+            valid_mask = ~(filtered_df['Predicted'].isna() | filtered_df['Ground_Truth'].isna())
 
-        date_end = best_date.replace(hour=18, minute=0)
+            if valid_mask.sum() > 0:
+                preds_valid = filtered_df.loc[valid_mask, 'Predicted'].values
+                gt_valid = filtered_df.loc[valid_mask, 'Ground_Truth'].values
 
-        
+                preds_valid_abs = preds_valid / 100.0
+                gt_valid_abs = gt_valid / 100.0
 
-        filtered_df = pred_df[
+                mse = np.mean((preds_valid_abs - gt_valid_abs) ** 2)
+                rmse_10am_6pm = np.sqrt(mse)
+                mae_10am_6pm = np.mean(np.abs(preds_valid_abs - gt_valid_abs))
+                n_samples = len(preds_valid)
 
-            (pred_df['Datetime'] >= date_start) &
+                date_str = pd.Timestamp(day_date).strftime('%Y-%m-%d')
+                print(f"  {resolution_name} {date_str}: RMSE = {rmse_10am_6pm:.4f}, MAE = {mae_10am_6pm:.4f}, Samples = {n_samples}")
 
-            (pred_df['Datetime'] <= date_end) &
-
-            (pred_df['Datetime'].dt.hour >= 10) &
-
-            (pred_df['Datetime'].dt.hour <= 18)
-
-        ].copy()
-
-        
-
-        # Remove duplicate datetimes - keep the first occurrence to avoid counting overlapping predictions multiple times
-
-        # This ensures each time point is only counted once in RMSE calculation
-
-        filtered_df = filtered_df.drop_duplicates(subset=['Datetime'], keep='first')
-
-        
-
-        # Calculate RMSE and MAE
-
-        valid_mask = ~(filtered_df['Predicted'].isna() | filtered_df['Ground_Truth'].isna())
-
-        if valid_mask.sum() > 0:
-
-            preds_valid = filtered_df.loc[valid_mask, 'Predicted'].values
-
-            gt_valid = filtered_df.loc[valid_mask, 'Ground_Truth'].values
-
-            
-
-            # Convert from percentage (0-100) to absolute decimal (0-1) scale
-
-            preds_valid_abs = preds_valid / 100.0
-
-            gt_valid_abs = gt_valid / 100.0
-
-            
-
-            # Debug: print statistics (in decimal scale)
-
-            print(f"    Debug - Predicted range: [{preds_valid_abs.min():.4f}, {preds_valid_abs.max():.4f}], mean: {preds_valid_abs.mean():.4f}")
-
-            print(f"    Debug - Ground truth range: [{gt_valid_abs.min():.4f}, {gt_valid_abs.max():.4f}], mean: {gt_valid_abs.mean():.4f}")
-
-            print(f"    Debug - Unique time points: {len(preds_valid_abs)}")
-
-            
-
-            # Calculate RMSE and MAE in absolute decimal scale (0-1)
-
-            mse = np.mean((preds_valid_abs - gt_valid_abs) ** 2)
-
-            rmse_10am_6pm = np.sqrt(mse)
-
-            mae_10am_6pm = np.mean(np.abs(preds_valid_abs - gt_valid_abs))
-
-            n_samples = len(preds_valid)
-
-            
-
-            date_str = best_date.strftime('June %d, %Y')
-
-            print(f"  {resolution_name}: RMSE = {rmse_10am_6pm:.4f}, MAE = {mae_10am_6pm:.4f}, Samples = {n_samples} ({date_str})")
-
-            
-
-            rmse_results.append({
-
-                'Resolution': resolution_name,
-
-                'Date': date_str,
-
-                'RMSE_10AM_6PM': rmse_10am_6pm,
-
-                'MAE_10AM_6PM': mae_10am_6pm,
-
-                'Number_of_Samples_10AM_6PM': n_samples
-
-            })
-
-        else:
-
-            print(f"  [WARNING] No valid data points for {resolution_name}")
-
-            rmse_results.append({
-
-                'Resolution': resolution_name,
-
-                'Date': 'N/A',
-
-                'RMSE_10AM_6PM': np.nan,
-
-                'MAE_10AM_6PM': np.nan,
-
-                'Number_of_Samples_10AM_6PM': 0
-
-            })
+                rmse_results.append({
+                    'Resolution': resolution_name,
+                    'Date': date_str,
+                    'RMSE_10AM_6PM': rmse_10am_6pm,
+                    'MAE_10AM_6PM': mae_10am_6pm,
+                    'Number_of_Samples_10AM_6PM': n_samples
+                })
+            else:
+                date_str = pd.Timestamp(day_date).strftime('%Y-%m-%d')
+                rmse_results.append({
+                    'Resolution': resolution_name,
+                    'Date': date_str,
+                    'RMSE_10AM_6PM': np.nan,
+                    'MAE_10AM_6PM': np.nan,
+                    'Number_of_Samples_10AM_6PM': 0
+                })
 
     
 
-    # Save RMSE results to CSV
+    # Save RMSE results to CSV (always write so downstream scripts find the file)
+    rmse_csv_path = os.path.join(output_dir, 'rmse_10am_6pm_by_resolution.csv')
+    os.makedirs(os.path.dirname(rmse_csv_path) if os.path.dirname(rmse_csv_path) else '.', exist_ok=True)
 
     if len(rmse_results) > 0:
-
         rmse_df = pd.DataFrame(rmse_results)
-
-        rmse_csv_path = os.path.join(output_dir, 'rmse_10am_6pm_by_resolution.csv')
-
-        os.makedirs(os.path.dirname(rmse_csv_path) if os.path.dirname(rmse_csv_path) else '.', exist_ok=True)
-
         rmse_df.to_csv(rmse_csv_path, index=False)
-
         print(f"\n  RMSE CSV saved: {rmse_csv_path}")
-
         print(f"\n  RMSE Results Summary:")
-
         print(rmse_df.to_string(index=False))
-
     else:
-
-        print(f"\n  [WARNING] No RMSE results to save")
+        # No results (e.g. no predictions for June 20/21 or all failed) – write placeholder so file exists
+        rmse_df = pd.DataFrame([{
+            'Resolution': '10-minute',
+            'Date': 'N/A',
+            'RMSE_10AM_6PM': np.nan,
+            'MAE_10AM_6PM': np.nan,
+            'Number_of_Samples_10AM_6PM': 0
+        }])
+        rmse_df.to_csv(rmse_csv_path, index=False)
+        print(f"\n  [WARNING] No RMSE results (no valid 10 AM–6 PM data); placeholder CSV saved: {rmse_csv_path}")
 
     
 
