@@ -1476,75 +1476,28 @@ def run_predictions_at_resolution(data_path, config, output_dir, resolution_minu
 
     
 
-    first_test_sample_idx = int(test_idx_list[0])
-
-    # past_hours is in hours, but we need to convert to data points based on resolution
-
+    # Map test sample indices to dataframe time indices (start of each prediction window)
     intervals_per_hour = 60 // resolution_minutes
-
     past_intervals = past_hours * intervals_per_hour
+    intervals_per_day = 24 * intervals_per_hour  # e.g. 144 for 10-min
 
-    first_test_start_in_df = int(past_intervals) + first_test_sample_idx
-
-    
-
-    first_test_datetime = df_clean.iloc[first_test_start_in_df]['Datetime']
-
-    target_year = first_test_datetime.year
-
-    
-
-    target_date = pd.Timestamp(year=target_year, month=6, day=20, hour=0, minute=0)
-
-    
-
-    start_idx = None
-
-    for idx in range(len(df_clean)):
-
-        if df_clean.iloc[idx]['Datetime'] >= target_date:
-
-            start_idx = idx
-
-            break
-
-    
-
-    if start_idx is None or start_idx < first_test_start_in_df:
-
-        print(f"  Warning: Could not find June 20, {target_year} 00:00 in test data.")
-
-        print(f"  Using first test sample start instead: {df_clean.iloc[first_test_start_in_df]['Datetime']}")
-
-        start_idx = first_test_start_in_df
-
-    else:
-
-        actual_start_date = df_clean.iloc[start_idx]['Datetime']
-
-        print(f"  Starting predictions from: {actual_start_date.strftime('%Y-%m-%d %H:%M')}")
-
-    
-
-    test_time_indices = []
-
-    for i in range(test_intervals):
-
-        time_idx = int(start_idx + i)
-
+    # All valid test time indices (one per test sample, where we have room for future_intervals)
+    all_valid = []
+    for s in test_idx_list:
+        time_idx = int(past_intervals + s)
         if time_idx >= 0 and time_idx < len(df_clean) - future_intervals:
+            all_valid.append(time_idx)
 
-            test_time_indices.append(time_idx)
+    # Subsample: one prediction per day so we get 10 AM-6 PM RMSE for every date without running 100k predictions
+    stride = max(1, intervals_per_day)
+    test_time_indices = all_valid[::stride]
 
-        else:
-
-            break
-
-    
-
-    if len(test_time_indices) < test_intervals:
-
-        print(f"  Warning: Only found {len(test_time_indices)} valid intervals (requested {test_intervals})")
+    if len(test_time_indices) == 0:
+        print(f"  Warning: No valid test time indices (check data length and test split).")
+    else:
+        first_dt = df_clean.iloc[test_time_indices[0]]['Datetime']
+        last_dt = df_clean.iloc[test_time_indices[-1]]['Datetime']
+        print(f"  Predictions from {first_dt.strftime('%Y-%m-%d')} to {last_dt.strftime('%Y-%m-%d')} ({len(test_time_indices)} days)")
 
     
 
