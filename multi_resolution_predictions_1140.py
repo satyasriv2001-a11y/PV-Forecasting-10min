@@ -1281,6 +1281,13 @@ def run_predictions_at_resolution(data_path, config, output_dir, resolution_minu
 
                 continue
 
+            # PCHIP requires finite y; fall back to ffill/bfill if column has NaN or inf
+            if not np.all(np.isfinite(y_orig)):
+
+                df_resampled[col] = df_resampled[col].ffill().bfill()
+
+                continue
+
             pchip = PchipInterpolator(t_orig, y_orig)
 
             df_resampled[col] = pchip(t_new)
