@@ -2,6 +2,7 @@
 # Google Colab: Plant Data from Drive → 10-Minute Predictions → RMSE (10 AM–6 PM)
 # =============================================================================
 # Copy each section below into a separate Colab cell and run in order.
+# Do not run the whole file as a script (magic commands require Colab/Jupyter).
 # 1. Mount Drive, 2. Set paths (edit DATA_PATH_IN_DRIVE), 3. Clone + install,
 # 4. Run predictions, 5. Display RMSE (10 AM–6 PM).
 # =============================================================================
@@ -17,6 +18,11 @@ DATA_PATH_IN_DRIVE = "/content/drive/MyDrive/AI_Models_for_Solar_Energy/Project1
 # Where to save results (predictions + RMSE CSV). Use a Drive path to keep results.
 OUTPUT_DIR_IN_DRIVE = "/content/drive/MyDrive/Solar PV electricity/rmse_10am_6pm_output"
 
+# Repo to clone: must contain multi_resolution_predictions_1140.py and data/, train/ packages.
+# If your 10-minute code is in a different repo or branch, change these (e.g. .../PV-Forecasting-10min).
+REPO_URL = "https://github.com/satyasriv2001-a11y/PV-Forecasting"
+CLONE_DIR = "PV-Forecasting"
+
 # Model settings (optional to change)
 MODEL = "XGB"           # or "Linear" for LR
 COMPLEXITY = "high"
@@ -26,15 +32,31 @@ USE_TIME_ENCODING = False  # set True to use time encoding
 
 # --- CELL 3: Clone repo and install dependencies ---
 %cd /content
-!rm -rf PV-Forecasting
-!git clone https://github.com/satyasriv2001-a11y/PV-Forecasting
-%cd /content/PV-Forecasting
+!rm -rf {CLONE_DIR}
+!git clone {REPO_URL} {CLONE_DIR}
+%cd /content/{CLONE_DIR}
 !pip install -q -r requirements.txt
+# If using XGB and Colab has no XGBoost GPU: patch train_ml to use CPU (avoids "XGBoost GPU not available! Cannot train.")
+# Run patch if present (add patch_xgb_cpu_for_colab.py to your repo so it's available after clone).
+!python patch_xgb_cpu_for_colab.py . || true
 
 # --- CELL 4: Run 10-minute predictions and generate RMSE (10 AM–6 PM) ---
 import subprocess
 import os
 import pandas as pd
+
+# Use same clone dir as Cell 3 (must match CLONE_DIR from Cell 2)
+clone_dir = CLONE_DIR
+repo_root = f"/content/{clone_dir}"
+script_name = "multi_resolution_predictions_1140.py"
+script_path = os.path.join(repo_root, script_name)
+
+if not os.path.isfile(script_path):
+    raise FileNotFoundError(
+        f"Prediction script not found: {script_path}\n"
+        "The cloned repo must contain multi_resolution_predictions_1140.py (and data/, train/ packages).\n"
+        "Edit REPO_URL / CLONE_DIR in Cell 2 to point to the repo that has the 10-minute code."
+    )
 
 data_path = DATA_PATH_IN_DRIVE
 output_dir = OUTPUT_DIR_IN_DRIVE
@@ -67,11 +89,20 @@ cmd = [
 if not USE_TIME_ENCODING:
     cmd.append("--no-time-encoding")
 
-result = subprocess.run(cmd, capture_output=True, text=True, cwd="/content/PV-Forecasting")
+result = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root)
 
 if result.returncode != 0:
-    print("STDERR:", result.stderr)
-    print("STDOUT (last 3000 chars):", result.stdout[-3000:])
+    print("STDERR:")
+    print(result.stderr or "(empty)")
+    print("\nSTDOUT:")
+    out = result.stdout or ""
+    if len(out) > 6000:
+        print(out[:3000])
+        print("\n... [truncated] ...\n")
+        print(out[-3000:])
+    else:
+        print(out)
+    print("\nFix the error above (e.g. missing data/train packages, wrong paths) then re-run this cell.")
 else:
     print("\n[OK] Predictions completed.")
 
@@ -102,9 +133,10 @@ if os.path.isfile(rmse_file):
         print(f"  Samples:   {n}")
         print("=" * 80)
     # One-line summary for quick readout
-    valid = df["RMSE_10AM_6PM"].dropna()
-    if len(valid) > 0:
-        print("\n>>> RMSE (10 AM – 6 PM) =", f"{valid.iloc[0]:.4f}")
+    if "RMSE_10AM_6PM" in df.columns:
+        valid = df["RMSE_10AM_6PM"].dropna()
+        if len(valid) > 0:
+            print("\n>>> RMSE (10 AM – 6 PM) =", f"{valid.iloc[0]:.4f}")
     print("\nFull table:")
     print(df.to_string(index=False))
 else:
